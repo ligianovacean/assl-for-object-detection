@@ -121,8 +121,9 @@ if __name__ == "__main__":
     # python experiments/prepare_coco_subset.py 
     # --data_path "../datasets/coco/train2017" 
     # --annotations_path "../datasets/coco/annotations/instances_train2017.json"
-    # --output_folder "../datasets/coco_cdt/coco/",
+    # --output_path "../datasets/coco_cdt/coco/",
     # --categories cat dog train
+    
     args = parse_args()
 
     generate_subset(data_path=args.data_path,
