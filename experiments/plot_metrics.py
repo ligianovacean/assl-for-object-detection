@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 from turtle import color
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,20 +32,22 @@ def parse_args():
                              "logged.")
     parser.add_argument("--categories", type=str, nargs='+', default=None,
                         help="Categories for which AP is computed.")
+    parser.add_argument("--start_index", type=int, default=0,
+                        help="Plot metrics starting with specified index.")
 
     args = parser.parse_args()
 
     return args
 
 
-def get_stage(metrics: List) -> str:
+def get_stage(metrics: Union[List[str], str]) -> str:
     if "bbox/AP" in metrics:
         return Stage.EVALUATION
 
     return Stage.TRAIN
 
 
-def parse_json(filepath: Path) -> Dict[str, List]:
+def parse_json(filepath: Path, start_index: int) -> Dict[str, List]:
     """
     Parses the .json file at `filepath` and returns a dictionary where:
     * keys are metric names
@@ -54,12 +56,13 @@ def parse_json(filepath: Path) -> Dict[str, List]:
     with open(filepath, 'r') as f:
         data = [json.loads(line) for line in f]
 
+    data = data[start_index:]
+
     metrics: Dict[str, List] = {}
     for step_metrics in data:
-        # Get stage (train or eval)
-        stage = get_stage(step_metrics)
-
         for metric_name, value in step_metrics.items():
+            # Get stage (train or eval)
+            stage = get_stage(metric_name)
             # Prefix metric with stage information
             metric_name = f"{stage}_{metric_name}"
 
@@ -73,14 +76,16 @@ def parse_json(filepath: Path) -> Dict[str, List]:
 
 def plot_stage_wise_metrics(names: List[str], metrics: Dict[str, List],
          folder: Path, out_filename: str,  
-         stages_info: Dict[str, Tuple[int, str]]):
-    _, ax = plt.subplots(1, len(names), figsize=(len(names) * 7, 7))
+         stages_info: Dict[str, Tuple[int, int, str]], start_index: int):
+    _, ax = plt.subplots(1, len(names), figsize=(len(names) * 10, 10))
 
-    for stage, (step_size, color) in stages_info.items():
+    for stage, (step_size, start_index, color) in stages_info.items():
         for idy, metric in enumerate(names):
             name = f"{stage}_{metric}"
             y_data = metrics[name]
-            x_data = np.arange(0, step_size*len(y_data), step_size)
+            x_data = np.arange(step_size*start_index, 
+                               step_size*(len(y_data)+start_index),
+                               step_size)
 
             c_axis = ax[idy] if len(names) > 1 else ax
             c_axis.plot(x_data, y_data, label=name, color=color)
@@ -93,7 +98,7 @@ def plot_stage_wise_metrics(names: List[str], metrics: Dict[str, List],
 
 
 def plot_metrics(metrics_json: Path, out_folder: str, train_step: int,
-                 val_step: int, categories: List[str]):
+                 val_step: int, categories: List[str], start_index: int):
     """
     Parses the input .json file with during-training information and generates
     the following plots for the following metrics:
@@ -116,23 +121,27 @@ def plot_metrics(metrics_json: Path, out_folder: str, train_step: int,
     """
 
     # Parse json and store metrics in dictionary
-    metrics = parse_json(metrics_json)
+    metrics = parse_json(metrics_json, start_index)
 
     # Create output folder if it does not exist
     output_folder = metrics_json.parent / out_folder
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    train_stage_info = {Stage.TRAIN: (train_step, 'b')}
-    val_stage_info = {Stage.EVALUATION: (val_step, 'r')}
+    train_start_index = start_index + 1
+    val_start_index = start_index / (val_step / train_step) + 1
+    train_stage_info = {Stage.TRAIN: (train_step, train_start_index, 'b')}
+    val_stage_info = {Stage.EVALUATION: (val_step, val_start_index, 'r')}
 
     # Plot train and validation losses
     plot_stage_wise_metrics(
-        names=["loss_box_reg", "loss_cls", "loss_rpn_cls", "loss_rpn_loc"],
+        names=["total_loss", "loss_box_reg", "loss_cls", "loss_rpn_cls",
+               "loss_rpn_loc"],
         metrics=metrics,
         folder=output_folder,
-        out_filename="losses.png",
-        stages_info=dict(train_stage_info, **val_stage_info)
+        out_filename=f"losses:{start_index}.png",
+        stages_info=train_stage_info,
+        start_index=start_index
     )
 
     # Plot training learning rate
@@ -140,8 +149,9 @@ def plot_metrics(metrics_json: Path, out_folder: str, train_step: int,
         names=["lr"],
         metrics=metrics,
         folder=output_folder,
-        out_filename="lr.png",
-        stages_info=train_stage_info
+        out_filename=f"lr:{start_index}.png",
+        stages_info=train_stage_info,
+        start_index=start_index
     )
 
     # Plot cross-category validation AP metrics
@@ -150,8 +160,9 @@ def plot_metrics(metrics_json: Path, out_folder: str, train_step: int,
                "bbox/APs"],
         metrics=metrics,
         folder=output_folder,
-        out_filename="AP.png",
-        stages_info=val_stage_info
+        out_filename=f"AP:{start_index}.png",
+        stages_info=val_stage_info,
+        start_index=start_index
     )
 
     # Plot category-wise validation AP metrics
@@ -159,8 +170,9 @@ def plot_metrics(metrics_json: Path, out_folder: str, train_step: int,
         names=[f"bbox/AP-{category}" for category in categories],
         metrics=metrics,
         folder=output_folder,
-        out_filename="AP_class-wise.png",
-        stages_info=val_stage_info
+        out_filename=f"AP_class-wise:{start_index}.png",
+        stages_info=val_stage_info,
+        start_index=start_index
     )
 
 
@@ -172,6 +184,7 @@ if __name__ == "__main__":
     # [--train_step 20] 
     # [--eval_step 100]
     # [--categories cat dog train]
+    # [--start_index 10]
     
     args = parse_args()
 
@@ -180,4 +193,5 @@ if __name__ == "__main__":
         out_folder=args.folder,
         train_step=args.train_step,
         val_step=args.eval_step,
-        categories=args.categories)
+        categories=args.categories,
+        start_index=args.start_index)
