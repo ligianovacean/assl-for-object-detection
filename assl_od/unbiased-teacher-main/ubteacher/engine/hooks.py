@@ -19,26 +19,26 @@ class LossEvalHook(HookBase):
         record_acc_dict = {}
         with inference_context(self._model), torch.no_grad():
             for _, inputs in enumerate(self._data_loader):
-                record_dict = self._get_loss(inputs, self._model)
-                # accumulate the losses
+                record_dict = self._get_loss(inputs)
+                # Accumulate metrics in a dictionary indexed by the metric name
                 for loss_type in record_dict.keys():
                     if loss_type not in record_acc_dict.keys():
                         record_acc_dict[loss_type] = record_dict[loss_type]
                     else:
                         record_acc_dict[loss_type] += record_dict[loss_type]
-            # average
+            # Compute metric average
             for loss_type in record_acc_dict.keys():
                 record_acc_dict[loss_type] = record_acc_dict[loss_type] / len(
                     self._data_loader
                 )
 
-            # divide loss and other metrics
+            # Extract only loss related info
             loss_acc_dict = {}
             for key in record_acc_dict.keys():
                 if key[:4] == "loss":
                     loss_acc_dict[key] = record_acc_dict[key]
 
-            # only output the results of major node
+            # Only output the results of the major node
             if comm.is_main_process():
                 total_losses_reduced = sum(loss for loss in loss_acc_dict.values())
                 self.trainer.storage.put_scalar(
@@ -53,15 +53,13 @@ class LossEvalHook(HookBase):
                 if len(record_acc_dict) > 1:
                     self.trainer.storage.put_scalars(**record_acc_dict)
 
-    def _get_loss(self, data, model):
+    def _get_loss(self, data):
         if self._model_output == "loss_only":
-            record_dict = model(data)
-
+            record_dict, _, _, _ = self._model(data, branch="supervised", val_mode=True)
         elif self._model_output == "loss_proposal":
-            record_dict, _, _, _ = model(data, branch="val_loss", val_mode=True)
-
+            record_dict, _, _, _ = self._model(data, branch="val_loss", val_mode=True)
         elif self._model_output == "meanteacher":
-            record_dict, _, _, _, _ = model(data)
+            record_dict, _, _, _, _ = self._model(data)
 
         metrics_dict = {
             k: v.detach().cpu().item() if isinstance(v, torch.Tensor) else float(v)
@@ -71,7 +69,7 @@ class LossEvalHook(HookBase):
         return metrics_dict
 
     def _write_losses(self, metrics_dict):
-        # gather metrics among all workers for logging
+        # Gather metrics among all workers for logging
         # This assumes we do DDP-style training, which is currently the only
         # supported method in detectron2.
         comm.synchronize()

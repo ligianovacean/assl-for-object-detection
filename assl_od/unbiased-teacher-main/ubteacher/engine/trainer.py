@@ -19,11 +19,10 @@ from detectron2.engine import hooks
 from detectron2.structures.boxes import Boxes
 from detectron2.structures.instances import Instances
 from detectron2.utils.env import TORCH_VERSION
-from detectron2.data import MetadataCatalog
+from detectron2.data import MetadataCatalog, build_detection_test_loader
 
 from ubteacher.data.build import (
     build_detection_semisup_train_loader,
-    build_detection_test_loader,
     build_detection_semisup_train_loader_two_crops,
 )
 from ubteacher.data.dataset_mapper import DatasetMapperTwoCropSeparate
@@ -179,14 +178,6 @@ class BaselineTrainer(DefaultTrainer):
     def build_train_loader(cls, cfg):
         return build_detection_semisup_train_loader(cfg, mapper=None)
 
-    @classmethod
-    def build_test_loader(cls, cfg, dataset_name):
-        """
-        Returns:
-            iterable
-        """
-        return build_detection_test_loader(cfg, dataset_name)
-
     def build_hooks(self):
         """
         Build a list of default hooks, including timing, evaluation,
@@ -224,6 +215,17 @@ class BaselineTrainer(DefaultTrainer):
             return self._last_eval_results
 
         ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD, test_and_save_results))
+        ret.append(LossEvalHook(
+                cfg.TEST.EVAL_PERIOD,
+                self.model,
+                build_detection_test_loader(
+                    self.cfg,
+                    self.cfg.DATASETS.TEST[0],
+                    DatasetMapper(self.cfg,True)
+                ),
+                "loss_proposal"
+            )
+        )
 
         if comm.is_main_process():
             ret.append(hooks.PeriodicWriter(self.build_writers(), period=20))
@@ -660,10 +662,6 @@ class UBTeacherTrainer(DefaultTrainer):
         else:
             self.model_teacher.load_state_dict(self.model.state_dict())
 
-    @classmethod
-    def build_test_loader(cls, cfg, dataset_name):
-        return build_detection_test_loader(cfg, dataset_name)
-
     def build_hooks(self):
         cfg = self.cfg.clone()
         cfg.defrost()
@@ -712,6 +710,28 @@ class UBTeacherTrainer(DefaultTrainer):
                    test_and_save_results_student))
         ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD,
                    test_and_save_results_teacher))
+        ret.append(LossEvalHook(
+                cfg.TEST.EVAL_PERIOD,
+                self.model,
+                build_detection_test_loader(
+                    self.cfg,
+                    self.cfg.DATASETS.TEST[0],
+                    DatasetMapper(self.cfg,True)
+                ),
+                "loss_proposal"
+            )
+        )
+        ret.append(LossEvalHook(
+                cfg.TEST.EVAL_PERIOD,
+                self.model_teacher,
+                build_detection_test_loader(
+                    self.cfg,
+                    self.cfg.DATASETS.TEST[0],
+                    DatasetMapper(self.cfg,True)
+                ),
+                "loss_proposal"
+            )
+        )
 
         if comm.is_main_process():
             # run writers in the end, so that evaluation metrics are written

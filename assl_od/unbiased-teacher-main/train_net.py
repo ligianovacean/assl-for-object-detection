@@ -23,7 +23,9 @@ def setup(args):
     """
     Create configs and perform basic setups.
     """
+    # Get detectron2 default config
     cfg = get_cfg()
+    # Overwrite default config using Unbiased Teacher specific config 
     add_ubteacher_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
